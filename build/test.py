@@ -24,7 +24,7 @@ def run():
   loader = unittest.TestLoader()
   suite = loader.discover(start_dir, pattern='*_test.py')
 
-  runner = unittest.TextTestRunner()
+  runner = unittest.TextTestRunner(verbosity=2)
   result = runner.run(suite)
   sys.exit(not result.wasSuccessful())
 
