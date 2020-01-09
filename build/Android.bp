@@ -30,6 +30,8 @@ python_test_host {
     main: "test.py",
     defaults: ["treble_build_default"],
     srcs: [
+        "overlay.py",
+        "overlay_test.py",
         "test.py",
         "sample_test.py",
     ],
