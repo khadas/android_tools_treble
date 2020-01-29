@@ -1,10 +1,10 @@
-# Copyright 2020 Google LLC
+# Copyright (C) 2020 The Android Open Source Project
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
 #
-#     https://www.apache.org/licenses/LICENSE-2.0
+#      http://www.apache.org/licenses/LICENSE-2.0
 #
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
@@ -13,11 +13,14 @@
 # limitations under the License.
 """Test manifest split."""
 
-import manifest_split
+import hashlib
+import mock
+import subprocess
 import tempfile
 import unittest
 import xml.etree.ElementTree as ET
-from hashlib import sha1
+
+import manifest_split
 
 
 class ManifestSplitTest(unittest.TestCase):
@@ -78,7 +81,8 @@ class ManifestSplitTest(unittest.TestCase):
       }""")
       module_info_file.flush()
       repo_projects = {}
-      with self.assertRaises(ValueError):
+      with self.assertRaisesRegex(ValueError,
+                                  'Unknown module path for module target1'):
         manifest_split.get_module_info(module_info_file.name, repo_projects)
 
   def test_scan_repo_projects(self):
@@ -136,14 +140,108 @@ class ManifestSplitTest(unittest.TestCase):
 
   def test_create_manifest_sha1_element(self):
     manifest = ET.ElementTree(ET.fromstring('<manifest></manifest>'))
-    manifest_sha1 = sha1(ET.tostring(manifest.getroot())).hexdigest()
+    manifest_sha1 = hashlib.sha1(ET.tostring(manifest.getroot())).hexdigest()
     self.assertEqual(
         ET.tostring(
             manifest_split.create_manifest_sha1_element(
                 manifest, 'test_manifest')).decode(),
         '<hash name="test_manifest" type="sha1" value="%s" />' % manifest_sha1)
 
-  # TODO(b/147590297): Test the main split_manifest() function.
+  @mock.patch.object(subprocess, 'check_output', autospec=True)
+  def test_create_split_manifest(self, mock_check_output):
+    with tempfile.NamedTemporaryFile('w+t') as repo_list_file, \
+      tempfile.NamedTemporaryFile('w+t') as manifest_file, \
+      tempfile.NamedTemporaryFile('w+t') as module_info_file, \
+      tempfile.NamedTemporaryFile('w+t') as config_file, \
+      tempfile.NamedTemporaryFile('w+t') as split_manifest_file:
+
+      repo_list_file.write("""
+        system/project1 : platform/project1
+        system/project2 : platform/project2
+        system/project3 : platform/project3
+        system/project4 : platform/project4
+        system/project5 : platform/project5
+        system/project6 : platform/project6""")
+      repo_list_file.flush()
+
+      manifest_file.write("""
+        <manifest>
+          <project name="platform/project1" path="system/project1" />
+          <project name="platform/project2" path="system/project2" />
+          <project name="platform/project3" path="system/project3" />
+          <project name="platform/project4" path="system/project4" />
+          <project name="platform/project5" path="system/project5" />
+          <project name="platform/project6" path="system/project6" />
+        </manifest>""")
+      manifest_file.flush()
+
+      module_info_file.write("""{
+        "droid": { "path": ["system/project1"] },
+        "target_a": { "path": ["out/project2"] },
+        "target_b": { "path": ["system/project3"] },
+        "target_c": { "path": ["system/project4"] },
+        "target_d": { "path": ["system/project5"] },
+        "target_e": { "path": ["system/project6"] }
+      }""")
+      module_info_file.flush()
+
+      # droid needs inputs from project1 and project3
+      ninja_inputs_droid = b"""
+      system/project1/file1
+      system/project1/file2
+      system/project3/file1
+      """
+
+      # target_b (indirectly included due to being in project3) needs inputs
+      # from project3 and project4
+      ninja_inputs_target_b = b"""
+      system/project3/file2
+      system/project4/file1
+      """
+
+      # target_c (indirectly included due to being in project4) needs inputs
+      # from only project4
+      ninja_inputs_target_c = b"""
+      system/project4/file2
+      system/project4/file3
+      """
+
+      mock_check_output.side_effect = [
+          ninja_inputs_droid,
+          ninja_inputs_target_b,
+          ninja_inputs_target_c,
+      ]
+
+      # The config file says to manually include project6
+      config_file.write("""
+        <config>
+          <add_project name="platform/project6" />
+        </config>""")
+      config_file.flush()
+
+      manifest_split.create_split_manifest(['droid'], manifest_file.name,
+                                           split_manifest_file.name,
+                                           [config_file.name],
+                                           repo_list_file.name,
+                                           'build-target.ninja',
+                                           module_info_file.name, 'ninja')
+      split_manifest = ET.parse(split_manifest_file.name)
+      split_manifest_projects = [
+          child.attrib['name']
+          for child in split_manifest.getroot().findall('project')
+      ]
+      self.assertEqual(
+          split_manifest_projects,
+          [
+              # From droid
+              'platform/project1',
+              # From droid
+              'platform/project3',
+              # From target_b (module within project3, indirect dependency)
+              'platform/project4',
+              # Manual inclusion from config file
+              'platform/project6',
+          ])
 
 
 if __name__ == '__main__':
