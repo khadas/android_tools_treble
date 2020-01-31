@@ -49,6 +49,9 @@ python_test_host {
         "manifest_split_test.py",
         "test.py",
     ],
+    libs: [
+        "py-mock",
+    ],
     test_config: "test.xml",
     test_suites: ["general-tests"],
 }

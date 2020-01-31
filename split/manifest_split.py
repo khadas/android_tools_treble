@@ -1,5 +1,3 @@
-#!/usr/bin/env python
-#
 # Copyright (C) 2020 The Android Open Source Project
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -13,7 +11,9 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Usage: manifest_split [options] targets
+"""Splits a manifest to the minimum set of projects needed to build the targets.
+
+Usage: manifest_split [options] targets
 
 targets: Space-separated list of targets that should be buildable
          using the split manifest.
@@ -53,6 +53,7 @@ options:
 from __future__ import print_function
 
 import getopt
+import hashlib
 import json
 import logging
 import os
@@ -60,7 +61,6 @@ import pkg_resources
 import subprocess
 import sys
 import xml.etree.ElementTree as ET
-from hashlib import sha1
 
 logging.basicConfig(
     stream=sys.stdout,
@@ -160,7 +160,7 @@ def get_ninja_inputs(ninja_binary, ninja_build_file, modules):
     ninja_build_file: The path to a .ninja file from a build.
     modules: The set of modules to scan for inputs.
   """
-  return set(
+  inputs = set(
       subprocess.check_output([
           ninja_binary,
           "-f",
@@ -169,6 +169,7 @@ def get_ninja_inputs(ninja_binary, ninja_build_file, modules):
           "inputs",
           "-d",
       ] + list(modules)).decode().strip("\n").split("\n"))
+  return {path.strip() for path in inputs}
 
 
 def scan_repo_projects(repo_projects, input_path):
@@ -212,7 +213,7 @@ def get_input_projects(repo_projects, inputs):
   }
 
 
-def update_manifest(manifest, input_projects, remove_projects=set()):
+def update_manifest(manifest, input_projects, remove_projects):
   """Modifies and returns a manifest ElementTree by modifying its projects.
 
   Args:
@@ -238,20 +239,35 @@ def create_manifest_sha1_element(manifest, name):
   Args:
     manifest: The manifest ElementTree to hash.
     name: The name string to give this element.
+
+  Returns:
+    The ElementTree 'hash' Element.
   """
   sha1_element = ET.Element("hash")
   sha1_element.set("type", "sha1")
   sha1_element.set("name", name)
-  sha1_element.set("value", sha1(ET.tostring(manifest.getroot())).hexdigest())
+  sha1_element.set("value",
+                   hashlib.sha1(ET.tostring(manifest.getroot())).hexdigest())
   return sha1_element
 
 
-def split_manifest(targets, manifest_file, split_manifest_file, config_files,
-                   repo_list_file, ninja_build_file, module_info_file,
-                   ninja_binary):
-  """Creates a split manifest by inspecting build inputs.
+def create_split_manifest(targets, manifest_file, split_manifest_file,
+                          config_files, repo_list_file, ninja_build_file,
+                          module_info_file, ninja_binary):
+  """Creates and writes a split manifest by inspecting build inputs.
 
-  See module docstring for arguments.
+  Args:
+    targets: List of targets that should be buildable using the split manifest.
+    manifest_file: Path to the repo manifest to split.
+    split_manifest_file: Path to write the resulting split manifest.
+    config_files: Paths to a config XML file containing projects to add or
+      remove. See default_config.xml for an example. This flag can be passed
+      more than once to use multiple config files.
+    repo_list_file: Path to the output of the 'repo list' command.
+    ninja_build_file: Path to the combined-<target>.ninja file found in an out
+      dir.
+    module_info_file: Path to the module-info.json file found in an out dir.
+    ninja_binary: Path to the ninja binary.
   """
   remove_projects = set()
   add_projects = set()
@@ -282,7 +298,7 @@ def split_manifest(targets, manifest_file, split_manifest_file, config_files,
   # While we still have projects whose modules we haven't checked yet,
   checked_projects = set()
   projects_to_check = input_projects.difference(checked_projects)
-  while len(projects_to_check) > 0:
+  while projects_to_check:
     # check all modules in each project,
     modules = []
     for project in projects_to_check:
@@ -382,7 +398,7 @@ def main(argv):
         os.environ["ANDROID_BUILD_TOP"], "out",
         "combined-%s.ninja" % os.environ["TARGET_PRODUCT"])
 
-  split_manifest(
+  create_split_manifest(
       targets=args,
       manifest_file=manifest_file,
       split_manifest_file=split_manifest_file,
