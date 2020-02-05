@@ -23,7 +23,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
-import overlay
+from . import overlay
 import re
 
 
