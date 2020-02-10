@@ -185,7 +185,7 @@ def scan_repo_projects(repo_projects, input_path):
   """
   parts = input_path.split("/")
 
-  for index in range(0, len(parts)):
+  for index in reversed(range(0, len(parts))):
     project_path = os.path.join(*parts[:index + 1])
     if project_path in repo_projects:
       return project_path
