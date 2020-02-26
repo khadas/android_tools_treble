@@ -30,6 +30,8 @@ python_test_host {
     main: "test.py",
     defaults: ["treble_build_default"],
     srcs: [
+        "sandbox/nsjail.py",
+        "sandbox/nsjail_test.py",
         "sandbox/overlay.py",
         "sandbox/overlay_test.py",
         "test.py",
