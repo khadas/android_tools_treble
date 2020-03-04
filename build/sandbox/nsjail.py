@@ -63,7 +63,8 @@ def run(command,
         readonly_bind_mounts=[],
         extra_nsjail_args=[],
         dry_run=False,
-        quiet=False):
+        quiet=False,
+        env=[]):
   """Run inside an NsJail sandbox.
 
   Args:
@@ -121,9 +122,11 @@ def run(command,
   if source_dir:
     source_dir = os.path.abspath(source_dir)
 
-  nsjail_bin = os.path.join(source_dir, nsjail_bin)
+  if nsjail_bin:
+    nsjail_bin = os.path.join(source_dir, nsjail_bin)
 
-  chroot = os.path.join(source_dir, chroot)
+  if chroot:
+    chroot = os.path.join(source_dir, chroot)
 
   if meta_root_dir:
     if not meta_android_dir or os.path.isabs(meta_android_dir):
@@ -136,13 +139,14 @@ def run(command,
 
   # By mounting the points individually that we need we reduce exposure and
   # keep the chroot clean from artifacts
-  for mpoints in _CHROOT_MOUNT_POINTS:
-    source = os.path.join(chroot, mpoints)
-    dest = os.path.join('/', mpoints)
-    if os.path.exists(source):
-      nsjail_command.extend([
-        '--bindmount_ro', '%s:%s' % (source, dest)
-      ])
+  if chroot:
+    for mpoints in _CHROOT_MOUNT_POINTS:
+      source = os.path.join(chroot, mpoints)
+      dest = os.path.join('/', mpoints)
+      if os.path.exists(source):
+        nsjail_command.extend([
+          '--bindmount_ro', '%s:%s' % (source, dest)
+        ])
 
   if build_id:
     nsjail_command.extend(['--env', 'BUILD_NUMBER=%s' % build_id])
@@ -214,6 +218,11 @@ def run(command,
         '--bindmount_ro', mount
     ])
 
+  for var in env:
+    nsjail_command.extend([
+        '--env', var
+    ])
+
   nsjail_command.extend(extra_nsjail_args)
 
   nsjail_command.append('--')
@@ -240,6 +249,7 @@ def parse_args():
       description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
   parser.add_argument(
       '--nsjail_bin',
+      required=True,
       help='Path to NsJail binary.')
   parser.add_argument(
       '--chroot',
@@ -277,7 +287,7 @@ def parse_args():
       action='append',
       default=[],
       help='Optional glob filter of directories to add to the whiteout. The '
-      'directories will not appear in the containter. '
+      'directories will not appear in the container. '
       'Can be specified multiple times.')
   parser.add_argument(
       '--command',
@@ -300,7 +310,7 @@ def parse_args():
   parser.add_argument(
       '--max_cpus',
       type=int,
-      help='Limit of concurrent CPU cores that the NsJail sanbox'
+      help='Limit of concurrent CPU cores that the NsJail sandbox'
       'can use. Defaults to unlimited.')
   parser.add_argument(
       '--bindmount',
@@ -331,6 +341,13 @@ def parse_args():
       'the container. WARNING: Using this flag will cause the adb server to be '
       'killed on the host machine. WARNING: Using this flag exposes parts of '
       'the host /sys/... file system. Use only when you need adb.')
+  parser.add_argument(
+      '--env', '-e',
+      type=str,
+      default=[],
+      action='append',
+      help='Specify an environment variable to the NSJail sandbox. Can be specified '
+      'muliple times. Syntax: var_name=value')
   return parser.parse_args()
 
 def run_with_args(args):
@@ -361,7 +378,8 @@ def run_with_args(args):
       extra_bind_mounts=args.bindmount,
       readonly_bind_mounts=args.bindmount_ro,
       dry_run=args.dry_run,
-      quiet=args.quiet)
+      quiet=args.quiet,
+      env=args.env)
 
 def main():
   run_with_args(parse_args())

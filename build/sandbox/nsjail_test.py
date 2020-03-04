@@ -129,5 +129,29 @@ class NsjailTest(unittest.TestCase):
         ]
     )
 
+  def testEnv(self):
+    commands = nsjail.run(
+        nsjail_bin='/bin/true',
+        chroot='/chroot',
+        source_dir='/source_dir',
+        command=['/bin/bash'],
+        android_target='target_name',
+        max_cpus=1,
+        dry_run=True,
+        env=['foo=bar', 'spam=eggs'])
+    self.assertEqual(
+        commands,
+        [
+            '/bin/true',
+            '--env', 'USER=android-build',
+            '--config', '/nsjail.cfg',
+            '--max_cpus=1',
+            '--bindmount', '/source_dir:/src',
+            '--env', 'foo=bar', '--env', 'spam=eggs',
+            '--', '/bin/bash'
+        ]
+    )
+
+
 if __name__ == '__main__':
   unittest.main()
