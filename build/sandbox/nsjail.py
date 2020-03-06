@@ -87,12 +87,13 @@ def run(command,
     mount_local_device: Whether to mount /dev/usb (and related) trees enabling
       adb to run inside the jail
     max_cpus: An integer with maximum number of CPUs.
-    extra_bind_mounts: An array of extra mounts in the 'source' or 'source:dest' syntax
-    readonly_bind_mounts: An array of read only mounts in the 'source' or 'source:dest' syntax
+    extra_bind_mounts: An array of extra mounts in the 'source' or 'source:dest' syntax.
+    readonly_bind_mounts: An array of read only mounts in the 'source' or 'source:dest' syntax.
     extra_nsjail_args: A list of strings that contain extra arguments to nsjail.
     dry_run: If true, the command will be returned but not executed
     quiet: If true, the function will not display the command and
       will pass -quiet argument to nsjail
+    env: An array of environment variables to define in the jail in the `var=val` syntax.
 
   Returns:
     A list of strings with the command executed.
@@ -210,18 +211,12 @@ def run(command,
     nsjail_command.extend(['--bindmount', '/sys/devices'])
 
   for mount in extra_bind_mounts:
-    nsjail_command.extend([
-        '--bindmount', mount
-    ])
+    nsjail_command.extend(['--bindmount', mount])
   for mount in readonly_bind_mounts:
-    nsjail_command.extend([
-        '--bindmount_ro', mount
-    ])
+    nsjail_command.extend(['--bindmount_ro', mount])
 
   for var in env:
-    nsjail_command.extend([
-        '--env', var
-    ])
+    nsjail_command.extend(['--env', var])
 
   nsjail_command.extend(extra_nsjail_args)
 
@@ -255,7 +250,7 @@ def parse_args():
       '--chroot',
       help='Path to the chroot to be used for building the Android'
       'platform. This will be mounted as the root filesystem in the'
-      'NsJail sanbox.')
+      'NsJail sandbox.')
   parser.add_argument(
       '--overlay_config',
       help='Path to the overlay configuration file.')
@@ -361,7 +356,7 @@ def run_with_args(args):
   Returns:
     A list of strings with the commands executed.
   """
-  commands = run(chroot=args.chroot,
+  run(chroot=args.chroot,
       nsjail_bin=args.nsjail_bin,
       overlay_config=args.overlay_config,
       source_dir=args.source_dir,

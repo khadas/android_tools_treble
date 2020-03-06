@@ -43,6 +43,7 @@ class NsjailTest(unittest.TestCase):
             '--', '/bin/bash'
         ]
     )
+
   def testSetBadMetaAndroidDir(self):
     os.chdir('/')
     with self.assertRaises(ValueError):
@@ -76,14 +77,14 @@ class NsjailTest(unittest.TestCase):
         dry_run=True)
     self.assertEqual(
         commands,
-        [   
+        [
             '/bin/true',
             '--env', 'USER=android-build',
             '--config', '/nsjail.cfg',
             '--env', 'DIST_DIR=/dist',
             '--bindmount', '/source_dir:/src',
             '--bindmount', '/dist_dir:/dist',
-            '--', '/bin/bash'   
+            '--', '/bin/bash'
         ]
     )
 
