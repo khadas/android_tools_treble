@@ -16,6 +16,7 @@
 
 import os
 import subprocess
+import tempfile
 import unittest
 from . import nsjail
 
@@ -56,6 +57,22 @@ class NsjailTest(unittest.TestCase):
         dry_run=True,
         meta_root_dir='/meta/dir',
         meta_android_dir='/android/dir')
+
+  def testRedirectStdout(self):
+    with tempfile.TemporaryFile('w+t') as out:
+      nsjail.run(
+          nsjail_bin='/bin/echo',
+          chroot='/chroot',
+          source_dir='/source_dir',
+          command=['/bin/bash'],
+          android_target='target_name',
+          stdout=out)
+      out.seek(0)
+      stdout = out.read()
+      args = ('--env USER=android-build --config /nsjail.cfg '
+              '--bindmount /source_dir:/src -- /bin/bash')
+      expected = '\n'.join([args, 'NsJail command:', '/bin/echo '+args])+'\n'
+      self.assertEqual(stdout, expected)
 
   def testFailingJailedCommand(self):
     with self.assertRaises(subprocess.CalledProcessError):

@@ -64,7 +64,9 @@ def run(command,
         extra_nsjail_args=[],
         dry_run=False,
         quiet=False,
-        env=[]):
+        env=[],
+        stdout=None,
+        stderr=None):
   """Run inside an NsJail sandbox.
 
   Args:
@@ -94,6 +96,11 @@ def run(command,
     quiet: If true, the function will not display the command and
       will pass -quiet argument to nsjail
     env: An array of environment variables to define in the jail in the `var=val` syntax.
+    stdout: the standard output for all printed messages. Valid values are None, a file
+      descriptor or file object. A None value means sys.stdout is used.
+    stderr: the standard error for all printed messages. Valid values are None, a file
+      descriptor or file object, and subprocess.STDOUT (which indicates that all stderr
+      should be redirected to stdout). A None value means sys.stderr is used.
 
   Returns:
     A list of strings with the command executed.
@@ -224,11 +231,11 @@ def run(command,
   nsjail_command.extend(command)
 
   if not quiet:
-    print('NsJail command:')
-    print(' '.join(nsjail_command))
+    print('NsJail command:', file=stdout)
+    print(' '.join(nsjail_command), file=stdout)
 
   if not dry_run:
-    subprocess.check_call(nsjail_command)
+    subprocess.check_call(nsjail_command, stdout=stdout, stderr=stderr)
 
   return nsjail_command
 
