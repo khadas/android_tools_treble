@@ -26,8 +26,6 @@ import os
 import re
 import subprocess
 from .overlay import BindOverlay
-import tempfile
-import glob
 
 _DEFAULT_META_ANDROID_DIR = 'LINUX/android'
 _DEFAULT_COMMAND = '/bin/bash'
