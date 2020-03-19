@@ -25,9 +25,8 @@ import collections
 import os
 import re
 import subprocess
+from .overlay import BindMount
 from .overlay import BindOverlay
-import tempfile
-import glob
 
 _DEFAULT_META_ANDROID_DIR = 'LINUX/android'
 _DEFAULT_COMMAND = '/bin/bash'
@@ -45,11 +44,45 @@ _CHROOT_MOUNT_POINTS = [
   'usr',
 ]
 
+def load_rw_whitelist(rw_whitelist_config):
+  """Loads a read/write whitelist configuration file.
+
+  The read/write whitelist configuration file is a text file that contains a
+  list of source_dir relative paths which should be mounted read/write inside
+  the build sandbox. Empty lines and lines begnning with a comment marker ('#')
+  will be ignored. An empty whitelist implies that all source paths are mounted
+  read-only. An empty rw_whitelist_config argument implies that all source
+  paths are mounted read/write.
+
+  Args:
+    rw_whitelist_config: A string path to a read/write whitelist file.
+
+  Returns:
+    A set of whitelist path strings.
+  """
+  if not rw_whitelist_config:
+    return None
+
+  if not os.path.exists(rw_whitelist_config):
+    return None
+
+  ret = set()
+  with open(rw_whitelist_config, 'r') as f:
+    for p in f.read().splitlines():
+      p = p.strip()
+      if not p or p.startswith('#'):
+        continue
+      ret.add(p)
+
+  return ret
+
+
 def run(command,
         android_target,
         nsjail_bin,
         chroot,
         overlay_config=None,
+        rw_whitelist_config=None,
         source_dir=os.getcwd(),
         out_dirname_for_whiteout=None,
         dist_dir=None,
@@ -76,6 +109,7 @@ def run(command,
     nsjail_bin: A string with the path to the nsjail binary.
     chroot: A string with the path to the chroot.
     overlay_config: A string path to an overlay configuration file.
+    rw_whitelist_config: A string path to a read/write whitelist configuration file.
     source_dir: A string with the path to the Android platform source.
     out_dirname_for_whiteout: The optional name of the folder within
       source_dir that is the Android build out folder *as seen from outside
@@ -105,20 +139,93 @@ def run(command,
   Returns:
     A list of strings with the command executed.
   """
+
+
+  nsjail_command = get_command(
+      command=command,
+      android_target=android_target,
+      nsjail_bin=nsjail_bin,
+      chroot=chroot,
+      overlay_config=overlay_config,
+      rw_whitelist_config=rw_whitelist_config,
+      source_dir=source_dir,
+      out_dirname_for_whiteout=out_dirname_for_whiteout,
+      dist_dir=dist_dir,
+      build_id=build_id,
+      out_dir=out_dir,
+      meta_root_dir=meta_root_dir,
+      meta_android_dir=meta_android_dir,
+      mount_local_device=mount_local_device,
+      max_cpus=max_cpus,
+      extra_bind_mounts=extra_bind_mounts,
+      readonly_bind_mounts=readonly_bind_mounts,
+      extra_nsjail_args=extra_nsjail_args,
+      quiet=quiet,
+      env=env)
+
+  run_command(
+      nsjail_command=nsjail_command,
+      mount_local_device=mount_local_device,
+      dry_run=dry_run,
+      quiet=quiet,
+      stdout=stdout,
+      stderr=stderr)
+
+  return nsjail_command
+
+def get_command(command,
+        android_target,
+        nsjail_bin,
+        chroot,
+        overlay_config=None,
+        rw_whitelist_config=None,
+        source_dir=os.getcwd(),
+        out_dirname_for_whiteout=None,
+        dist_dir=None,
+        build_id=None,
+        out_dir = None,
+        meta_root_dir = None,
+        meta_android_dir = _DEFAULT_META_ANDROID_DIR,
+        mount_local_device = False,
+        max_cpus=None,
+        extra_bind_mounts=[],
+        readonly_bind_mounts=[],
+        extra_nsjail_args=[],
+        quiet=False,
+        env=[]):
+  """Get command to run nsjail sandbox.
+
+  Args:
+    command: A list of strings with the command to run.
+    android_target: A string with the name of the target to be prepared
+      inside the container.
+    nsjail_bin: A string with the path to the nsjail binary.
+    chroot: A string with the path to the chroot.
+    overlay_config: A string path to an overlay configuration file.
+    rw_whitelist_config: A string path to a read/write whitelist configuration file.
+    source_dir: A string with the path to the Android platform source.
+    out_dirname_for_whiteout: The optional name of the folder within
+      source_dir that is the Android build out folder *as seen from outside
+      the Docker container*.
+    dist_dir: A string with the path to the dist directory.
+    build_id: A string with the build identifier.
+    out_dir: An optional path to the Android build out folder.
+    meta_root_dir: An optional path to a folder containing the META build.
+    meta_android_dir: An optional path to the location where the META build expects
+      the Android build. This path must be relative to meta_root_dir.
+    max_cpus: An integer with maximum number of CPUs.
+    extra_bind_mounts: An array of extra mounts in the 'source' or 'source:dest' syntax.
+    readonly_bind_mounts: An array of read only mounts in the 'source' or 'source:dest' syntax.
+    extra_nsjail_args: A list of strings that contain extra arguments to nsjail.
+    quiet: If true, the function will not display the command and
+      will pass -quiet argument to nsjail
+    env: An array of environment variables to define in the jail in the `var=val` syntax.
+
+  Returns:
+    A list of strings with the command to execute.
+  """
   script_dir = os.path.dirname(os.path.abspath(__file__))
   config_file = os.path.join(script_dir, 'nsjail.cfg')
-
-  if mount_local_device:
-    # A device can only communicate with one adb server at a time, so the adb server is
-    # killed on the host machine.
-    for line in subprocess.check_output(['ps','-eo','cmd']).decode().split('\n'):
-      if re.match(r'adb.*fork-server.*', line):
-        print('An adb server is running on your host machine. This server must be '
-              'killed to use the --mount_local_device flag.')
-        print('Continue? [y/N]: ', end='')
-        if input().lower() != 'y':
-          exit()
-        subprocess.check_call(['adb', 'kill-server'])
 
   # Run expects absolute paths
   if out_dir:
@@ -173,6 +280,8 @@ def run(command,
     if not os.path.exists(out_dir):
       os.makedirs(out_dir)
 
+  rw_whitelist = load_rw_whitelist(rw_whitelist_config)
+
   # Apply the overlay for the selected Android target to the source
   # directory if an overlay configuration was provided
   if overlay_config and os.path.exists(overlay_config):
@@ -180,30 +289,36 @@ def run(command,
                       source_dir,
                       overlay_config,
                       whiteout_list,
-                      _SOURCE_MOUNT_POINT)
+                      _SOURCE_MOUNT_POINT,
+                      rw_whitelist)
     bind_mounts = overlay.GetBindMounts()
   else:
     bind_mounts = collections.OrderedDict()
-    bind_mounts[_SOURCE_MOUNT_POINT] = source_dir
+    bind_mounts[_SOURCE_MOUNT_POINT] = BindMount(source_dir, False)
 
   if out_dir:
-    bind_mounts[_OUT_MOUNT_POINT] = out_dir
+    bind_mounts[_OUT_MOUNT_POINT] = BindMount(out_dir, False)
 
   if dist_dir:
-    bind_mounts[_DIST_MOUNT_POINT] = dist_dir
+    bind_mounts[_DIST_MOUNT_POINT] = BindMount(dist_dir, False)
     nsjail_command.extend([
         '--env', 'DIST_DIR=%s'%_DIST_MOUNT_POINT
     ])
 
   if meta_root_dir:
-    bind_mounts[_META_MOUNT_POINT] = meta_root_dir
-    bind_mounts[os.path.join(_META_MOUNT_POINT, meta_android_dir)] = source_dir
+    bind_mounts[_META_MOUNT_POINT] = BindMount(meta_root_dir, False)
+    bind_mounts[os.path.join(_META_MOUNT_POINT, meta_android_dir)] = BindMount(source_dir, False)
     if out_dir:
-      bind_mounts[os.path.join(_META_MOUNT_POINT, meta_android_dir, 'out')] = out_dir
+      bind_mounts[os.path.join(_META_MOUNT_POINT, meta_android_dir, 'out')] = BindMount(out_dir, False)
 
-  for bind_destination, bind_source in bind_mounts.items():
+  for bind_destination, bind_mount in bind_mounts.items():
+    if bind_mount.readonly:
       nsjail_command.extend([
-        '--bindmount',  bind_source + ':' + bind_destination
+        '--bindmount_ro',  bind_mount.source_dir + ':' + bind_destination
+      ])
+    else:
+      nsjail_command.extend([
+        '--bindmount',  bind_mount.source_dir + ':' + bind_destination
       ])
 
   if mount_local_device:
@@ -230,14 +345,48 @@ def run(command,
   nsjail_command.append('--')
   nsjail_command.extend(command)
 
+  return nsjail_command
+
+def run_command(nsjail_command,
+                mount_local_device=False,
+                dry_run=False,
+                quiet=False,
+                stdout=None,
+                stderr=None):
+  """Run the provided nsjail command.
+
+  Args:
+    nsjail_command: A list of strings with the command to run.
+    mount_local_device: Whether to mount /dev/usb (and related) trees enabling
+      adb to run inside the jail
+    dry_run: If true, the command will be returned but not executed
+    quiet: If true, the function will not display the command and
+      will pass -quiet argument to nsjail
+    stdout: the standard output for all printed messages. Valid values are None, a file
+      descriptor or file object. A None value means sys.stdout is used.
+    stderr: the standard error for all printed messages. Valid values are None, a file
+      descriptor or file object, and subprocess.STDOUT (which indicates that all stderr
+      should be redirected to stdout). A None value means sys.stderr is used.
+  """
+
+  if mount_local_device:
+    # A device can only communicate with one adb server at a time, so the adb server is
+    # killed on the host machine.
+    for line in subprocess.check_output(['ps','-eo','cmd']).decode().split('\n'):
+      if re.match(r'adb.*fork-server.*', line):
+        print('An adb server is running on your host machine. This server must be '
+              'killed to use the --mount_local_device flag.')
+        print('Continue? [y/N]: ', end='')
+        if input().lower() != 'y':
+          exit()
+        subprocess.check_call(['adb', 'kill-server'])
+
   if not quiet:
     print('NsJail command:', file=stdout)
     print(' '.join(nsjail_command), file=stdout)
 
   if not dry_run:
     subprocess.check_call(nsjail_command, stdout=stdout, stderr=stderr)
-
-  return nsjail_command
 
 def parse_args():
   """Parse command line arguments.
@@ -261,6 +410,9 @@ def parse_args():
   parser.add_argument(
       '--overlay_config',
       help='Path to the overlay configuration file.')
+  parser.add_argument(
+      '--rw_whitelist_config',
+      help='Path to the read/write whitelist configuration file.')
   parser.add_argument(
       '--source_dir',
       default=os.getcwd(),
@@ -366,6 +518,7 @@ def run_with_args(args):
   run(chroot=args.chroot,
       nsjail_bin=args.nsjail_bin,
       overlay_config=args.overlay_config,
+      rw_whitelist_config=args.rw_whitelist_config,
       source_dir=args.source_dir,
       command=args.command.split(),
       android_target=args.android_target,
