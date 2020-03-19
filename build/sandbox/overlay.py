@@ -22,11 +22,14 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+import collections
 import os
 import subprocess
 import tempfile
-import collections
 import xml.etree.ElementTree as ET
+
+BindMount = collections.namedtuple('BindMount', ['source_dir', 'readonly'])
+
 
 class BindOverlay(object):
   """Manages filesystem overlays of Android source tree using bind mounts.
@@ -58,14 +61,14 @@ class BindOverlay(object):
       None if there was no conflict found.
     """
     conflict_path = None
-    for bind_destination, bind_source in self._bind_mounts.items():
+    for bind_destination, bind_mount in self._bind_mounts.items():
       # Check if the path is a subdir or the bind destination
       if path == bind_destination:
-        conflict_path = bind_source
+        conflict_path = bind_mount.source_dir
         break
       elif path.startswith(bind_destination + os.sep):
         relative_path = os.path.relpath(path, bind_destination)
-        path_in_source = os.path.join(bind_source, relative_path)
+        path_in_source = os.path.join(bind_mount.source_dir, relative_path)
         if os.path.exists(path_in_source) and os.listdir(path_in_source):
           # A conflicting path exists within this bind mount
           # and it's not empty
@@ -75,7 +78,7 @@ class BindOverlay(object):
     return conflict_path
 
   def _AddOverlay(self, overlay_dir, intermediate_work_dir, skip_subdirs,
-      destination_dir):
+                  destination_dir, rw_whitelist):
     """Adds a single overlay directory.
 
     Args:
@@ -85,6 +88,8 @@ class BindOverlay(object):
       skip_subdirs: A set of string paths to skip from overlaying.
       destination_dir: A string with the path to the source with the overlays
         applied to it.
+      rw_whitelist: An optional set of source paths to bind mount with
+        read/write access.
     """
     # Traverse the overlay directory twice
     # The first pass only process git projects
@@ -109,7 +114,11 @@ class BindOverlay(object):
         # The current dir is a git project
         # so just bind mount it
         del subdirs[:]
-        self._AddBindMount(current_dir_origin, current_dir_destination)
+
+        if rw_whitelist is None or current_dir_origin in rw_whitelist:
+          self._AddBindMount(current_dir_origin, current_dir_destination, False)
+        else:
+          self._AddBindMount(current_dir_origin, current_dir_destination, True)
 
         current_dir_ancestor = current_dir_origin
         while current_dir_ancestor and current_dir_ancestor not in dirs_with_git_projects:
@@ -149,13 +158,19 @@ class BindOverlay(object):
         for file in files:
           file_origin = os.path.join(current_dir_origin, file)
           file_destination = os.path.join(current_dir_destination, file)
-          self._AddBindMount(file_origin, file_destination)
+          if rw_whitelist is None or file_origin in rw_whitelist:
+            self._AddBindMount(file_origin, file_destination, False)
+          else:
+            self._AddBindMount(file_origin, file_destination, True)
 
       else:
         # The current dir does not have any git projects to it can be bind
         # mounted wholesale
         del subdirs[:]
-        self._AddBindMount(current_dir_origin, current_dir_destination)
+        if rw_whitelist is None or current_dir_origin in rw_whitelist:
+          self._AddBindMount(current_dir_origin, current_dir_destination, False)
+        else:
+          self._AddBindMount(current_dir_origin, current_dir_destination, True)
 
   def _AddArtifactDirectories(self, source_dir, destination_dir, skip_subdirs):
     """Add directories that were not synced as workspace source.
@@ -181,20 +196,20 @@ class BindOverlay(object):
         if out_origin in skip_subdirs:
           continue
         out_destination = os.path.join(destination_dir, subdir)
-        self._AddBindMount(out_origin, out_destination)
+        self._AddBindMount(out_origin, out_destination, False)
         skip_subdirs.add(out_origin)
 
     repo_origin = os.path.join(source_dir, '.repo')
     if os.path.exists(repo_origin):
       repo_destination = os.path.normpath(
         os.path.join(destination_dir, '.repo'))
-      self._AddBindMount(repo_origin, repo_destination)
+      self._AddBindMount(repo_origin, repo_destination, False)
       skip_subdirs.add(repo_origin)
 
     return skip_subdirs
 
   def _AddOverlays(self, source_dir, overlay_dirs, destination_dir,
-      skip_subdirs):
+                   skip_subdirs, rw_whitelist):
     """Add the selected overlay directories.
 
     Args:
@@ -204,6 +219,8 @@ class BindOverlay(object):
       destination_dir: A string with the path to the source where the overlays
         will be applied.
       skip_subdirs: A set of string paths to be skipped from overlays.
+      rw_whitelist: An optional set of source paths to bind mount with
+        read/write access.
     """
 
     # Create empty intermediate workdir
@@ -227,10 +244,10 @@ class BindOverlay(object):
 
     for overlay_dir in overlay_dirs:
       self._AddOverlay(overlay_dir, intermediate_work_dir,
-          skip_subdirs, destination_dir)
+                       skip_subdirs, destination_dir, rw_whitelist)
 
 
-  def _AddBindMount(self, source_dir, destination_dir):
+  def _AddBindMount(self, source_dir, destination_dir, readonly=False):
     """Adds a bind mount for the specified directory.
 
     Args:
@@ -239,6 +256,8 @@ class BindOverlay(object):
       destination_dir: A string with the path ofa destination
         directory to bind the source into. If it does not exist,
         it will be created.
+      readonly: A flag to indicate whether this path should be bind mounted
+        with read-only access.
     """
     conflict_path = self._FindBindMountConflict(destination_dir)
     if conflict_path:
@@ -249,7 +268,8 @@ class BindOverlay(object):
     if len(self._bind_mounts) >= self.MAX_BIND_MOUNTS:
       raise ValueError("Bind mount limit of %s reached" % self.MAX_BIND_MOUNTS)
 
-    self._bind_mounts[destination_dir] = source_dir
+    self._bind_mounts[destination_dir] = BindMount(
+        source_dir=source_dir, readonly=readonly)
 
   def _CopyFile(self, source_path, dest_path):
     """Copies a file to the specified destination.
@@ -269,7 +289,7 @@ class BindOverlay(object):
     """Enumerates all bind mounts required by this Overlay.
 
     Returns:
-      An ordered dict of source path strings keyed by destination path string.
+      An ordered dict of BindMount objects keyed by destination path string.
       The order of the bind mounts does matter, this is why it's an ordered
       dict instead of a standard dict.
     """
@@ -280,17 +300,22 @@ class BindOverlay(object):
                source_dir,
                config_file,
                whiteout_list = [],
-               destination_dir=None):
+               destination_dir=None,
+               rw_whitelist=None):
     """Inits Overlay with the details of what is going to be overlaid.
 
     Args:
       target: A string with the name of the target to be prepared.
       source_dir: A string with the path to the Android platform source.
-      whiteout_list: A list of directories to hide from the build system.
       config_file: A string path to the XML config file.
+      whiteout_list: A list of directories to hide from the build system.
       destination_dir: A string with the path where the overlay filesystem
         will be created. If none is provided, the overlay filesystem
         will be applied directly on top of source_dir.
+      rw_whitelist: An optional set of source paths to bind mount with
+        read/write access. If none is provided, all paths will be mounted with
+        read/write access. If the set is empty, all paths will be mounted
+        read-only.
     """
 
     if not destination_dir:
@@ -305,13 +330,19 @@ class BindOverlay(object):
     # seems appropriate
     skip_subdirs = set(whiteout_list)
 
+    # The read/write whitelist provids paths relative to the source dir. It
+    # needs to be updated with absolute paths to make lookup possible.
+    if rw_whitelist:
+      rw_whitelist = {os.path.join(source_dir, p) for p in rw_whitelist}
+
     overlay_dirs = []
     overlay_map = get_overlay_map(config_file)
     for overlay_dir in overlay_map[target]:
       overlay_dir = os.path.join(source_dir, 'overlays', overlay_dir)
       overlay_dirs.append(overlay_dir)
 
-    self._AddOverlays(source_dir, overlay_dirs, destination_dir, skip_subdirs)
+    self._AddOverlays(
+        source_dir, overlay_dirs, destination_dir, skip_subdirs, rw_whitelist)
 
     # If specified for this target, create a custom filesystem view
     fs_view_map = get_fs_view_map(config_file)
@@ -320,7 +351,10 @@ class BindOverlay(object):
         path_from = os.path.join(source_dir, path_relative_from)
         if os.path.isfile(path_from) or os.path.isdir(path_from):
           path_to = os.path.join(destination_dir, path_relative_to)
-          self._AddBindMount(path_from, path_to)
+          if rw_whitelist is None or path_from in rw_whitelist:
+            self._AddBindMount(path_from, path_to, False)
+          else:
+            self._AddBindMount(path_from, path_to, True)
         else:
           raise ValueError("Path '%s' must be a file or directory" % path_from)
 
