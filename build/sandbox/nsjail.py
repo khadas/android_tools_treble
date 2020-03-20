@@ -249,7 +249,7 @@ def get_command(command,
           'relative to meta_root_dir.')
 
   nsjail_command = [nsjail_bin,
-    '--env', 'USER=android-build',
+    '--env', 'USER=nobody',
     '--config', config_file]
 
   # By mounting the points individually that we need we reduce exposure and
