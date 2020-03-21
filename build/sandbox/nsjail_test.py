@@ -38,7 +38,7 @@ class NsjailTest(unittest.TestCase):
         commands,
         [
             '/bin/true',
-            '--env', 'USER=android-build',
+            '--env', 'USER=nobody',
             '--config', '/nsjail.cfg',
             '--bindmount', '/source_dir:/src',
             '--', '/bin/bash'
@@ -69,7 +69,7 @@ class NsjailTest(unittest.TestCase):
           stdout=out)
       out.seek(0)
       stdout = out.read()
-      args = ('--env USER=android-build --config /nsjail.cfg '
+      args = ('--env USER=nobody --config /nsjail.cfg '
               '--bindmount /source_dir:/src -- /bin/bash')
       expected = '\n'.join([args, 'NsJail command:', '/bin/echo '+args])+'\n'
       self.assertEqual(stdout, expected)
@@ -96,7 +96,7 @@ class NsjailTest(unittest.TestCase):
         commands,
         [
             '/bin/true',
-            '--env', 'USER=android-build',
+            '--env', 'USER=nobody',
             '--config', '/nsjail.cfg',
             '--env', 'DIST_DIR=/dist',
             '--bindmount', '/source_dir:/src',
@@ -118,7 +118,7 @@ class NsjailTest(unittest.TestCase):
         commands,
         [
             '/bin/true',
-            '--env', 'USER=android-build',
+            '--env', 'USER=nobody',
             '--config', '/nsjail.cfg',
             '--env', 'BUILD_NUMBER=0',
             '--bindmount', '/source_dir:/src',
@@ -139,7 +139,7 @@ class NsjailTest(unittest.TestCase):
         commands,
         [
             '/bin/true',
-            '--env', 'USER=android-build',
+            '--env', 'USER=nobody',
             '--config', '/nsjail.cfg',
             '--max_cpus=1',
             '--bindmount', '/source_dir:/src',
@@ -161,7 +161,7 @@ class NsjailTest(unittest.TestCase):
         commands,
         [
             '/bin/true',
-            '--env', 'USER=android-build',
+            '--env', 'USER=nobody',
             '--config', '/nsjail.cfg',
             '--max_cpus=1',
             '--bindmount', '/source_dir:/src',
