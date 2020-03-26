@@ -15,6 +15,7 @@
 
 import hashlib
 import mock
+import os
 import subprocess
 import tempfile
 import unittest
@@ -84,6 +85,52 @@ class ManifestSplitTest(unittest.TestCase):
       with self.assertRaisesRegex(ValueError,
                                   'Unknown module path for module target1'):
         manifest_split.get_module_info(module_info_file.name, repo_projects)
+
+  @mock.patch.object(subprocess, 'check_output', autospec=True)
+  def test_get_kati_makefiles(self, mock_check_output):
+    with tempfile.TemporaryDirectory() as temp_dir:
+      os.chdir(temp_dir)
+
+      makefiles = [
+          'device/oem1/product1.mk',
+          'device/oem2/product2.mk',
+          'device/google/google_product.mk',
+          'overlays/oem_overlay/device/oem3/product3.mk',
+          'packages/apps/Camera/Android.mk',
+      ]
+      for makefile in makefiles:
+        os.makedirs(os.path.dirname(makefile))
+        os.mknod(makefile)
+
+      symlink_src = os.path.join(temp_dir, 'vendor/oem4/symlink_src.mk')
+      os.makedirs(os.path.dirname(symlink_src))
+      os.mknod(symlink_src)
+      symlink_dest = 'device/oem4/symlink_dest.mk'
+      os.makedirs(os.path.dirname(symlink_dest))
+      os.symlink(symlink_src, symlink_dest)
+      # Only append the symlink destination, not where the symlink points to.
+      # (The Kati stamp file does not resolve symlink sources.)
+      makefiles.append(symlink_dest)
+
+      # Mock the output of ckati_stamp_dump:
+      mock_check_output.side_effect = [
+          '\n'.join(makefiles).encode(),
+      ]
+
+      kati_makefiles = manifest_split.get_kati_makefiles(
+          'stamp-file', ['overlays/oem_overlay/'])
+      self.assertEqual(
+          kati_makefiles,
+          set([
+              # Regular product makefiles
+              'device/oem1/product1.mk',
+              'device/oem2/product2.mk',
+              # Product makefile remapped from an overlay
+              'device/oem3/product3.mk',
+              # Product makefile symlink and its source
+              'device/oem4/symlink_dest.mk',
+              'vendor/oem4/symlink_src.mk',
+          ]))
 
   def test_scan_repo_projects(self):
     repo_projects = {
@@ -208,6 +255,7 @@ class ManifestSplitTest(unittest.TestCase):
 
       mock_check_output.side_effect = [
           ninja_inputs_droid,
+          b'',  # Unused kati makefiles. This is tested in its own method.
           ninja_inputs_target_b,
           ninja_inputs_target_c,
       ]
@@ -219,12 +267,11 @@ class ManifestSplitTest(unittest.TestCase):
         </config>""")
       config_file.flush()
 
-      manifest_split.create_split_manifest(['droid'], manifest_file.name,
-                                           split_manifest_file.name,
-                                           [config_file.name],
-                                           repo_list_file.name,
-                                           'build-target.ninja',
-                                           module_info_file.name, 'ninja')
+      manifest_split.create_split_manifest(
+          ['droid'], manifest_file.name, split_manifest_file.name,
+          [config_file.name], repo_list_file.name, 'build-target.ninja',
+          'ninja', module_info_file.name, 'unused kati stamp',
+          ['unused overlay'])
       split_manifest = ET.parse(split_manifest_file.name)
       split_manifest_projects = [
           child.attrib['name']
